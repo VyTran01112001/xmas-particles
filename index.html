@@ -2,165 +2,143 @@
 <html lang="vi">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Xmas Tree Gesture Control</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Smooth Xmas Particles</title>
     <style>
-        body { margin: 0; overflow: hidden; background-color: #020b16; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        body { margin: 0; overflow: hidden; background-color: #01050a; position: fixed; width: 100%; height: 100%; }
         #container { width: 100vw; height: 100vh; }
         #video-container {
-            position: absolute; bottom: 20px; right: 20px;
-            width: 180px; height: 135px; border: 2px solid rgba(255,255,255,0.3);
-            border-radius: 12px; overflow: hidden; transform: scaleX(-1);
-            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            position: absolute; top: 10px; right: 10px;
+            width: 120px; height: 90px; border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 8px; overflow: hidden; transform: scaleX(-1);
+            z-index: 10; opacity: 0.7;
         }
         video { width: 100%; height: 100%; object-fit: cover; }
-        .ui-overlay {
-            position: absolute; top: 20px; left: 20px; color: white;
-            background: rgba(255, 255, 255, 0.1); backdrop-filter: blur(10px);
-            padding: 20px; border-radius: 15px; border: 1px solid rgba(255,255,255,0.2);
-            pointer-events: none;
+        .status {
+            position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+            color: #00ff88; font-family: monospace; font-size: 10px; text-align: center;
         }
-        h2 { margin: 0 0 10px 0; color: #ffcf40; font-size: 1.2rem; }
-        p { margin: 5px 0; font-size: 0.9rem; opacity: 0.9; }
     </style>
 </head>
 <body>
 
 <div id="container"></div>
-<div id="video-container"><video id="input_video"></video></div>
-<div class="ui-overlay">
-    <h2>🎄 Cây Thông Tuyết 3D</h2>
-    <p>• <b>Xòe/Khép 2 tay:</b> Để làm cây thông "nở hoa" hoặc thu nhỏ.</p>
-    <p>• <b>Tuyết rơi:</b> Tốc độ cố định, phản hồi thời gian thực.</p>
-</div>
+<div id="video-container"><video id="input_video" playsinline></video></div>
+<div class="status">Đang tối ưu hiệu suất...</div>
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.152.0/build/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/dat.gui/build/dat.gui.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
 
 <script>
-    // --- KHỞI TẠO SCENE ---
+    // 1. CẤU HÌNH RENDERER SIÊU NHẸ
     const scene = new THREE.Scene();
-    scene.fog = new THREE.FogExp2(0x020b16, 0.15);
-    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 100);
+    const renderer = new THREE.WebGLRenderer({ 
+        antialias: false, // Tắt khử răng cưa để tăng FPS
+        powerPreference: "high-performance" 
+    });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5)); // Giới hạn mật độ điểm ảnh
     renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(window.devicePixelRatio);
     document.getElementById('container').appendChild(renderer.domElement);
 
-    camera.position.set(0, 2, 8);
+    camera.position.set(0, 2, 7);
 
-    // --- HỆ THỐNG HẠT (CÂY THÔNG) ---
-    const treeParticleCount = 6000;
-    const treeGeometry = new THREE.BufferGeometry();
-    const treePositions = new Float32Array(treeParticleCount * 3);
-    const treeBaseCoords = new Float32Array(treeParticleCount * 3);
+    // 2. TẠO HẠT (GIẢM SỐ LƯỢNG ĐỂ MƯỢT HƠN)
+    const treeCount = 2500; 
+    const treeGeo = new THREE.BufferGeometry();
+    const treePos = new Float32Array(treeCount * 3);
+    const treeBase = new Float32Array(treeCount * 3);
 
-    for (let i = 0; i < treeParticleCount; i++) {
-        // Thuật toán tạo hình cây thông (nón xếp tầng)
-        const y = Math.random() * 5; // Chiều cao 5 đơn vị
-        const layer = Math.floor(y); 
-        const radiusAtY = (5 - y) * 0.4; // Đường kính hẹp dần khi lên cao
-        
+    for (let i = 0; i < treeCount; i++) {
+        const y = Math.random() * 5;
+        const radiusAtY = (5 - y) * 0.45;
         const angle = Math.random() * Math.PI * 2;
         const r = Math.sqrt(Math.random()) * radiusAtY;
-
-        const x = Math.cos(angle) * r;
-        const z = Math.sin(angle) * r;
-
-        treeBaseCoords[i*3] = x;
-        treeBaseCoords[i*3+1] = y - 2; // Căn giữa theo trục Y
-        treeBaseCoords[i*3+2] = z;
+        treeBase[i*3] = Math.cos(angle) * r;
+        treeBase[i*3+1] = y - 2.5;
+        treeBase[i*3+2] = Math.sin(angle) * r;
     }
-
-    treeGeometry.setAttribute('position', new THREE.BufferAttribute(treePositions, 3));
-    const treeMaterial = new THREE.PointsMaterial({
-        size: 0.04,
-        color: 0x228b22, // Xanh lá thông
-        transparent: true,
-        blending: THREE.AdditiveBlending
-    });
-    const tree = new THREE.Points(treeGeometry, treeMaterial);
+    treeGeo.setAttribute('position', new THREE.BufferAttribute(treePos, 3));
+    const treeMat = new THREE.PointsMaterial({ size: 0.04, color: 0x00ffaa, transparent: true, opacity: 0.8 });
+    const tree = new THREE.Points(treeGeo, treeMat);
     scene.add(tree);
 
-    // --- HỆ THỐNG TUYẾT RƠI ---
-    const snowCount = 2000;
+    // Tuyết
+    const snowCount = 400;
     const snowGeo = new THREE.BufferGeometry();
     const snowPos = new Float32Array(snowCount * 3);
-    for(let i=0; i<snowCount*3; i++) {
-        snowPos[i] = (Math.random() - 0.5) * 20;
-    }
+    for(let i=0; i<snowCount*3; i++) snowPos[i] = (Math.random()-0.5)*15;
     snowGeo.setAttribute('position', new THREE.BufferAttribute(snowPos, 3));
-    const snowMat = new THREE.PointsMaterial({ size: 0.05, color: 0xffffff, transparent: true, opacity: 0.8 });
-    const snow = new THREE.Points(snowGeo, snowMat);
+    const snow = new THREE.Points(snowGeo, new THREE.PointsMaterial({size: 0.03, color: 0xffffff}));
     scene.add(snow);
 
-    // --- GIAO DIỆN ĐIỀU KHIỂN ---
-    const config = { treeColor: '#228b22', snowSpeed: 0.02 };
-    const gui = new dat.GUI();
-    gui.addColor(config, 'treeColor').name('Màu lá thông').onChange(c => treeMaterial.color.set(c));
-    gui.add(config, 'snowSpeed', 0, 0.1).name('Tốc độ tuyết');
-
-    // --- NHẬN DIỆN CỬ CHỈ ---
+    // 3. XỬ LÝ AI TỐI ƯU CHO DI ĐỘNG
     const videoElement = document.getElementById('input_video');
     let targetScale = 1;
+    let currentScale = 1;
 
-    function onResults(results) {
-        if (results.multiHandLandmarks && results.multiHandLandmarks.length >= 2) {
-            const h1 = results.multiHandLandmarks[0][0];
-            const h2 = results.multiHandLandmarks[1][0];
+    const hands = new Hands({locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`});
+    hands.setOptions({
+        maxNumHands: 2,
+        modelComplexity: 0, // Cực kỳ quan trọng: Mode 0 chạy nhanh gấp 3 lần Mode 1
+        minDetectionConfidence: 0.4,
+        minTrackingConfidence: 0.4
+    });
+
+    hands.onResults((res) => {
+        if (res.multiHandLandmarks && res.multiHandLandmarks.length >= 2) {
+            const h1 = res.multiHandLandmarks[0][0];
+            const h2 = res.multiHandLandmarks[1][0];
             const dist = Math.sqrt(Math.pow(h1.x - h2.x, 2) + Math.pow(h1.y - h2.y, 2));
-            targetScale = THREE.MathUtils.mapLinear(dist, 0.1, 0.7, 0.5, 4);
+            targetScale = THREE.MathUtils.clamp(dist * 6, 0.5, 4);
         } else {
             targetScale = 1;
         }
-    }
+    });
 
-    const hands = new Hands({locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`});
-    hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.5 });
-    hands.onResults(onResults);
+    const cam = new Camera(videoElement, {
+        onFrame: async () => { await hands.send({image: videoElement}); },
+        width: 256, height: 192 // Độ phân giải cực thấp cho AI để giảm tải CPU
+    });
+    cam.start();
 
-    new Camera(videoElement, {
-        onFrame: async () => await hands.send({image: videoElement}),
-        width: 640, height: 480
-    }).start();
-
-    // --- ANIMATION ---
-    let currentScale = 1;
-
+    // 4. VÒNG LẶP ANIMATION TỐI ƯU
     function animate() {
         requestAnimationFrame(animate);
         
-        // Cập nhật cây thông
-        currentScale = THREE.MathUtils.lerp(currentScale, targetScale, 0.1);
-        const positions = treeGeometry.attributes.position.array;
-        for (let i = 0; i < treeParticleCount; i++) {
-            positions[i*3] = treeBaseCoords[i*3] * currentScale;
-            positions[i*3+1] = treeBaseCoords[i*3+1]; // Giữ chiều cao
-            positions[i*3+2] = treeBaseCoords[i*3+2] * currentScale;
+        // Nội suy mượt mà hơn (Lerp factor 0.15 thay vì 0.1)
+        currentScale = THREE.MathUtils.lerp(currentScale, targetScale, 0.15);
+        
+        const p = treeGeo.attributes.position.array;
+        for (let i = 0; i < treeCount; i++) {
+            // Chỉ cập nhật X và Z để tạo hiệu ứng thu phóng ngang, giữ nguyên Y để đỡ tốn tài nguyên tính toán
+            p[i*3] = treeBase[i*3] * currentScale;
+            p[i*3+1] = treeBase[i*3+1];
+            p[i*3+2] = treeBase[i*3+2] * currentScale;
         }
-        treeGeometry.attributes.position.needsUpdate = true;
+        treeGeo.attributes.position.needsUpdate = true;
         tree.rotation.y += 0.005;
-
-        // Cập nhật tuyết rơi
-        const sPos = snowGeo.attributes.position.array;
+        
+        // Tuyết rơi
+        const s = snowGeo.attributes.position.array;
         for(let i=1; i<snowCount*3; i+=3) {
-            sPos[i] -= config.snowSpeed;
-            if(sPos[i] < -5) sPos[i] = 10; // Reset tuyết khi rơi xuống thấp
+            s[i] -= 0.02;
+            if(s[i] < -4) s[i] = 8;
         }
         snowGeo.attributes.position.needsUpdate = true;
 
         renderer.render(scene, camera);
     }
+    
+    animate();
 
+    // Xử lý xoay màn hình
     window.addEventListener('resize', () => {
         camera.aspect = window.innerWidth / window.innerHeight;
         camera.updateProjectionMatrix();
         renderer.setSize(window.innerWidth, window.innerHeight);
     });
-
-    animate();
 </script>
 </body>
 </html>
