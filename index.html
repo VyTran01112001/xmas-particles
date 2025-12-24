@@ -2,168 +2,124 @@
 <html lang="vi">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3D Particle Gesture Control</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Dynamic Hand Tree</title>
     <style>
-        body { margin: 0; overflow: hidden; background-color: #000; font-family: sans-serif; }
+        body { margin: 0; overflow: hidden; background-color: #01050a; }
         #container { width: 100vw; height: 100vh; }
         #video-container {
-            position: absolute; bottom: 20px; right: 20px;
-            width: 200px; height: 150px; border: 2px solid #555;
-            border-radius: 8px; overflow: hidden; transform: scaleX(-1);
+            position: absolute; top: 10px; right: 10px;
+            width: 100px; height: 75px; border-radius: 8px; 
+            overflow: hidden; transform: scaleX(-1); border: 1px solid #333;
         }
         video { width: 100%; height: 100%; object-fit: cover; }
-        .instructions {
-            position: absolute; top: 20px; left: 20px; color: white;
-            background: rgba(0,0,0,0.5); padding: 15px; border-radius: 8px;
-            pointer-events: none;
-        }
     </style>
 </head>
 <body>
 
 <div id="container"></div>
-<div id="video-container">
-    <video id="input_video"></video>
-</div>
-<div class="instructions">
-    <h2>Điều khiển Hạt bằng Cử chỉ</h2>
-    <p>• Đưa 2 tay lên camera<br>• Di chuyển 2 tay xa/gần nhau để mở rộng/thu gọn nhóm hạt</p>
-</div>
+<div id="video-container"><video id="input_video" playsinline></video></div>
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.152.0/build/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/dat.gui/build/dat.gui.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
 
 <script>
-    // --- CẤU HÌNH THREE.JS ---
     const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 100);
+    const renderer = new THREE.WebGLRenderer({ antialias: false });
     renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.2));
     document.getElementById('container').appendChild(renderer.domElement);
 
-    camera.position.z = 5;
+    camera.position.z = 8;
 
-    // Tạo hệ thống hạt
-    const particleCount = 5000;
-    const geometry = new THREE.BufferGeometry();
-    const positions = new Float32Array(particleCount * 3);
-    const originals = new Float32Array(particleCount * 3); // Lưu vị trí hình cầu gốc
+    // --- CÂY THÔNG LINH ĐỘNG ---
+    const treeCount = 2000;
+    const treeGeo = new THREE.BufferGeometry();
+    const treePos = new Float32Array(treeCount * 3);
+    const treeBase = new Float32Array(treeCount * 3);
 
-    for (let i = 0; i < particleCount; i++) {
-        // Tạo hình cầu mặc định (Radius = 2)
-        const theta = Math.random() * Math.PI * 2;
-        const phi = Math.acos((Math.random() * 2) - 1);
-        const r = 2;
-
-        const x = r * Math.sin(phi) * Math.cos(theta);
-        const y = r * Math.sin(phi) * Math.sin(theta);
-        const z = r * Math.cos(phi);
-
-        positions[i * 3] = x;
-        positions[i * 3 + 1] = y;
-        positions[i * 3 + 2] = z;
-
-        originals[i * 3] = x;
-        originals[i * 3 + 1] = y;
-        originals[i * 3 + 2] = z;
+    for (let i = 0; i < treeCount; i++) {
+        const y = Math.random() * 4;
+        const radiusAtY = (4 - y) * 0.5;
+        const angle = Math.random() * Math.PI * 2;
+        const r = Math.sqrt(Math.random()) * radiusAtY;
+        treeBase[i*3] = Math.cos(angle) * r;
+        treeBase[i*3+1] = y - 2;
+        treeBase[i*3+2] = Math.sin(angle) * r;
     }
+    treeGeo.setAttribute('position', new THREE.BufferAttribute(treePos, 3));
+    const treeMat = new THREE.PointsMaterial({ size: 0.06, color: 0x00ff88, transparent: true, opacity: 0 });
+    const tree = new THREE.Points(treeGeo, treeMat);
+    scene.add(tree);
 
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    const material = new THREE.PointsMaterial({
-        size: 0.03,
-        color: 0x00ffff,
-        transparent: true,
-        blending: THREE.AdditiveBlending
-    });
+    // --- BIẾN ĐIỀU KHIỂN ---
+    let targetPos = new THREE.Vector3(0, 0, 0);
+    let currentPos = new THREE.Vector3(0, 0, 0);
+    let targetScale = 1;
+    let currentScale = 1;
+    let isVisible = false;
 
-    const particles = new THREE.Points(geometry, material);
-    scene.add(particles);
+    // --- XỬ LÝ AI ---
+    const hands = new Hands({locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`});
+    hands.setOptions({ maxNumHands: 2, modelComplexity: 0, minDetectionConfidence: 0.5 });
 
-    // --- GUI (BỘ CHỌN MÀU) ---
-    const params = { color: '#00ffff', expansion: 1 };
-    const gui = new dat.GUI();
-    gui.addColor(params, 'color').onChange(val => material.color.set(val));
+    hands.onResults((res) => {
+        if (res.multiHandLandmarks && res.multiHandLandmarks.length >= 2) {
+            isVisible = true;
+            const h1 = res.multiHandLandmarks[0][0];
+            const h2 = res.multiHandLandmarks[1][0];
 
-    // --- XỬ LÝ NHẬN DIỆN TAY (MEDIAPIPE) ---
-    const videoElement = document.getElementById('input_video');
-    let targetExpansion = 1;
+            // 1. Tính tâm điểm giữa 2 tay (Normalize 0->1 sang không gian 3D)
+            const midX = ((h1.x + h2.x) / 2 - 0.5) * -15; // Nhân hệ số để phủ kín màn hình
+            const midY = ((h1.y + h2.y) / 2 - 0.5) * -10 + 2;
+            targetPos.set(midX, midY, 0);
 
-    function onResults(results) {
-        if (results.multiHandLandmarks && results.multiHandLandmarks.length >= 2) {
-            // Lấy tọa độ trung tâm của bàn tay 1 và bàn tay 2
-            const hand1 = results.multiHandLandmarks[0][0]; // Gốc bàn tay
-            const hand2 = results.multiHandLandmarks[1][0];
-
-            // Tính khoảng cách Euclid giữa 2 bàn tay (0.0 đến ~1.0)
-            const dx = hand1.x - hand2.x;
-            const dy = hand1.y - hand2.y;
-            const distance = Math.sqrt(dx*dx + dy*dy);
-
-            // Map khoảng cách vào độ mở rộng (Ví dụ: 0.2 -> 1, 0.7 -> 5)
-            targetExpansion = THREE.MathUtils.mapLinear(distance, 0.1, 0.6, 1, 6);
+            // 2. Tính độ rộng thu phóng
+            const dist = Math.sqrt(Math.pow(h1.x - h2.x, 2) + Math.pow(h1.y - h2.y, 2));
+            targetScale = dist * 4.5;
         } else {
-            // Thu nhỏ về hình cầu nếu không đủ 2 tay
-            targetExpansion = 1;
+            isVisible = false;
         }
-    }
-
-    const hands = new Hands({
-        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
     });
 
-    hands.setOptions({
-        maxNumHands: 2,
-        modelComplexity: 1,
-        minDetectionConfidence: 0.5,
-        minTrackingConfidence: 0.5
-    });
-    hands.onResults(onResults);
+    const videoElement = document.getElementById('input_video');
+    new Camera(videoElement, {
+        onFrame: async () => await hands.send({image: videoElement}),
+        width: 320, height: 240
+    }).start();
 
-    const cameraInput = new Camera(videoElement, {
-        onFrame: async () => {
-            await hands.send({image: videoElement});
-        },
-        width: 640,
-        height: 480
-    });
-    cameraInput.start();
-
-    // --- VÒNG LẶP ANIMATION ---
-    let currentExpansion = 1;
-
+    // --- VÒNG LẶP RENDER ---
     function animate() {
         requestAnimationFrame(animate);
 
-        // Nội suy mượt mà cho việc mở rộng (Lerp)
-        currentExpansion = THREE.MathUtils.lerp(currentExpansion, targetExpansion, 0.1);
+        // Nội suy vị trí (Lerp) - giúp cây thông "đuổi" theo tay mượt mà
+        currentPos.lerp(targetPos, 0.15);
+        currentScale = THREE.MathUtils.lerp(currentScale, targetScale, 0.2);
+        
+        // Hiệu ứng mờ dần khi mất dấu tay
+        treeMat.opacity = THREE.MathUtils.lerp(treeMat.opacity, isVisible ? 1 : 0, 0.1);
 
-        const posAttr = geometry.attributes.position;
-        for (let i = 0; i < particleCount; i++) {
-            // Đẩy hạt ra xa dựa trên vị trí gốc
-            posAttr.array[i * 3] = originals[i * 3] * currentExpansion;
-            posAttr.array[i * 3 + 1] = originals[i * 3 + 1] * currentExpansion;
-            posAttr.array[i * 3 + 2] = originals[i * 3 + 2] * currentExpansion;
+        const p = treeGeo.attributes.position.array;
+        for (let i = 0; i < treeCount; i++) {
+            // Cập nhật vị trí hạt dựa trên tâm của tay (currentPos)
+            p[i*3] = treeBase[i*3] * currentScale + currentPos.x;
+            p[i*3+1] = treeBase[i*3+1] + currentPos.y;
+            p[i*3+2] = treeBase[i*3+2] * currentScale + currentPos.z;
         }
-        posAttr.needsUpdate = true;
-
-        // Xoay nhẹ hệ thống hạt cho sinh động
-        particles.rotation.y += 0.002;
-        particles.rotation.x += 0.001;
+        treeGeo.attributes.position.needsUpdate = true;
+        tree.rotation.y += 0.02;
 
         renderer.render(scene, camera);
     }
+    animate();
 
     window.addEventListener('resize', () => {
         camera.aspect = window.innerWidth / window.innerHeight;
         camera.updateProjectionMatrix();
         renderer.setSize(window.innerWidth, window.innerHeight);
     });
-
-    animate();
 </script>
-
 </body>
 </html>
